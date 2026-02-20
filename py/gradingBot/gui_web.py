@@ -4,6 +4,10 @@ Streamlit frontend for the Grading Bot.
 Run with: streamlit run gradingBot/app.py
 """
 
+# Adding so that .env credentials are loaded
+from dotenv import load_dotenv
+load_dotenv()
+
 import streamlit as st
 import time
 import tempfile
@@ -243,7 +247,10 @@ def main():
                     temp_path = temp_dir / uploaded_file.name
                     with open(temp_path, "wb") as f:
                         f.write(uploaded_file.getbuffer())
-                    
+                    print("DEBUG: Saved temp file. Size (MB):",
+                          Path(temp_path).stat().st_size / (1024 * 1024))
+
+
                     try:
                         # Upload based on document type
                         if doc_type == "Syllabus":
@@ -263,7 +270,7 @@ def main():
                         elif doc_type == "Textbook":
                             result = st.session_state.bot.upload_textbook(temp_path, description)
                         
-                        if "error" in result:
+                        if "error" in result.get("result", {}):
                             error_msg = result['error']
                             # Check for HTTP 413 (Request Too Long)
                             if "413" in error_msg or "Too Long" in error_msg or "Too Large" in error_msg:
@@ -286,9 +293,14 @@ def main():
                             else:
                                 st.error(f"Upload failed: {error_msg}")
                         else:
+                            # Successful upload: always show chunks info
+                            chunks = result.get("chunks", [])
                             st.success(f"✅ Document uploaded successfully!")
+                            st.info(f"Number of chunks created: {len(chunks)}")
+                            if chunks:
+                                st.info("Chunks: " + ", ".join(chunks))
                             st.info("⏳ Please wait 20-30 seconds for the document to be processed before grading.")
-                            
+
                             # Update uploaded docs list
                             st.session_state.uploaded_docs.append({
                                 "type": doc_type,
@@ -296,9 +308,10 @@ def main():
                                 "assignment": assignment_name,
                                 "description": description
                             })
-                            
+
                             # Clean up temp file
                             temp_path.unlink()
+
                     except Exception as e:
                         st.error(f"Error during upload: {str(e)}")
                         if temp_path.exists():

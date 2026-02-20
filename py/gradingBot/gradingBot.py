@@ -19,6 +19,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+# Added for splitting large pdfs
+from PyPDF2 import PdfReader, PdfWriter
+import tempfile
+
 class GradingBot:
     """
     A grading bot that uses LLM Proxy with RAG to grade student submissions
@@ -191,6 +195,32 @@ class GradingBot:
             })
         return result
     
+    # def upload_textbook(self, file_path: Union[str, Path], description: Optional[str] = None) -> Dict:
+    #     """
+    #     Upload the course textbook.
+        
+    #     Args:
+    #         file_path: Path to the textbook PDF file
+    #         description: Optional description
+            
+    #     Returns:
+    #         Response from upload operation
+    #     """
+    #     result = self.client.upload_file(
+    #         file_path=file_path,
+    #         session_id=self.session_id,
+    #         description=description or "Course Textbook",
+    #         strategy="smart"
+    #     )
+    #     if "error" not in result:
+    #         self.uploaded_docs.append({
+    #             "type": "textbook",
+    #             "path": str(file_path),
+    #             "description": description or "Course Textbook"
+    #         })
+    #     return result
+    
+    # Updated to automatically split up large uploads
     def upload_textbook(self, file_path: Union[str, Path], description: Optional[str] = None) -> Dict:
         """
         Upload the course textbook.
@@ -202,20 +232,111 @@ class GradingBot:
         Returns:
             Response from upload operation
         """
-        result = self.client.upload_file(
-            file_path=file_path,
-            session_id=self.session_id,
-            description=description or "Course Textbook",
-            strategy="smart"
+        # Debug
+        print("DEBUG: upload_textbook received file size (MB):",
+              Path(file_path).stat().st_size / (1024 * 1024))
+
+
+        file_path = Path(file_path)
+        doc_name = file_path.stem
+        doc_descr = description or "Course Textbook"
+
+        # Split into chunks if needed
+        chunks = self._split_large_pdfs(
+            filepath=file_path,
+            doctype="textbook",
+            max_pages_per_chunk=150,
+            doc_name=doc_name,
+            doc_descr=doc_descr
         )
-        if "error" not in result:
-            self.uploaded_docs.append({
-                "type": "textbook",
-                "path": str(file_path),
-                "description": description or "Course Textbook"
-            })
-        return result
+
+        # Track results and chunk info
+        results = []
+        uploaded_chunk_names = []
+
+        for chunk_file in chunks:
+            print("Uploading ", doc_name)
+            result = self.client.upload_file(
+                file_path=chunk_file,
+                session_id=self.session_id,
+                description=doc_descr,
+                strategy="smart"
+            )
+            if "error" not in result:
+                self.uploaded_docs.append({
+                    "type": "textbook",
+                    "path": str(chunk_file),
+                    "description": doc_descr
+                })
+                uploaded_chunk_names.append(chunk_file.name)
+            results.append(result)
+
+        # Return last result as representative
+        # return results[-1] if results else {"error": "No file uploaded"}
+        return {
+            "result": results[-1] if results else {"error": "No file uploaded "},
+            "chunks": uploaded_chunk_names
+        }
+            
+            
+
     
+
+    # For PDFs exceeding max upload size, split automatically
+    def _split_large_pdfs(
+            self, 
+            filepath: Union[str,Path],
+            doctype: str,
+            max_pages_per_chunk: int = 255,
+            doc_name: Optional[str] = None,
+            doc_descr: Optional[str] = None
+    ) -> list[Path]:
+        """
+        Split a large PDF into smaller chunks and prepare them for upload.
+
+        Args:
+            filepath: Path to the original PDF file.
+            doctype: Document type ("syllabus", "lecture", "assignment", etc.)
+            max_pages_per_chunk: Max pages per split PDF.
+            doc_name: Optional name of the document.
+            doc_descr: Optional description of the document.
+
+        Returns:
+            List of paths to the split PDF files (temporary files ready for upload).
+        """
+        # Initialize return
+        chunk_files: List[Path] = []
+        
+        # Open pdf and count pages
+        filepath = Path(filepath)
+        reader = PdfReader(str(filepath))
+        total_pages = len(reader.pages)
+
+        for start in range(0, total_pages, max_pages_per_chunk):
+            end = min(start + max_pages_per_chunk, total_pages)
+            writer = PdfWriter()
+
+            # Add max pages to pdf chunk
+            for i in range(start, end):
+                writer.add_page(reader.pages[i])
+            
+            # Save chunk to temp file
+            temp_file = Path(tempfile.gettempdir()) / f"{filepath.stem}_part{start//max_pages_per_chunk + 1}.pdf"
+            
+            with open(temp_file, "wb") as f:
+                writer.write(f)
+
+            # Add chunk to list
+            chunk_files.append(temp_file)
+            print("Adding chunk: ", i)
+        
+        print("DEBUG: Total chunks created =", len(chunk_files))
+
+
+        return chunk_files
+
+
+
     def wait_for_processing(self, seconds: int = 20):
         """
         Wait for uploaded documents to be processed by the backend.
