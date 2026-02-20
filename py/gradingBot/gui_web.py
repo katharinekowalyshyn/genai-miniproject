@@ -5,12 +5,18 @@ Run with: streamlit run gradingBot/app.py
 """
 
 import streamlit as st
-from pathlib import Path
 import time
 import tempfile
 from typing import Dict, List
 import sys
+
+from dotenv import load_dotenv
+from pathlib import Path
 import os
+
+# Load .env from py/ directory
+BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / ".env")
 
 # Ensure parent directory (py/) is in Python path for package imports
 current_dir = os.path.dirname(os.path.abspath(__file__))

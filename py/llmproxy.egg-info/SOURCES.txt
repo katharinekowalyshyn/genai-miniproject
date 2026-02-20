@@ -4,6 +4,7 @@ pyproject.toml
 examples/generate.py
 examples/greentim.pdf
 examples/model_info.py
+examples/multiturn_example.py
 examples/retrieve.py
 examples/retrieve_and_generate.py
 examples/upload_file.py

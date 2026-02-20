@@ -8,12 +8,15 @@ This system allows TAs/Professors to:
 
 Users are distinguished by session_id to maintain separate document collections.
 """
-
+from gradingBot.tools import calculator_tool, web_api_tool
 from pathlib import Path
 from typing import Dict, List, Optional, Union
 from time import sleep
 import json
 from llmproxy import LLMProxy
+
+from dotenv import load_dotenv
+load_dotenv()
 
 
 class GradingBot:
@@ -45,6 +48,24 @@ class GradingBot:
         
         # Track uploaded documents
         self.uploaded_docs: List[Dict[str, str]] = []
+
+        self.tools = {
+            "calculator": calculator_tool,
+            "web_api": web_api_tool
+        }
+
+    def use_tool(self, tool_name: str, **kwargs) -> Dict:
+        """
+        Execute a registered tool by name.
+        """
+        if tool_name not in self.tools:
+            return {"error": f"Tool '{tool_name}' not found"}
+
+        try:
+            return self.tools[tool_name](**kwargs)
+        except Exception as e:
+            return {"error": str(e)}
+    
     
     def upload_syllabus(self, file_path: Union[str, Path], description: Optional[str] = None) -> Dict:
         """
@@ -260,6 +281,9 @@ class GradingBot:
                 - rag_context_used: Context retrieved from course materials
                 - raw_response: Full LLM response
         """
+
+
+
         # Build the grading query with context
         query_parts = []
         
@@ -276,6 +300,9 @@ class GradingBot:
             query_parts.append(f"\nMaximum Points: {max_points}")
         
         query = "\n".join(query_parts)
+
+        #tool detection
+        tool_context = self._run_tools_for_submission(student_answer)
         
         # Retrieve relevant context from course materials
         rag_result = self.client.retrieve(
@@ -293,9 +320,19 @@ class GradingBot:
             }
         
         # Extract RAG context
-        rag_context = rag_result.get("rag_context", [])
+        '''rag_context = rag_result.get("rag_context", [])
+        formatted_context = self._format_rag_context(rag_context)'''
+
+        # Extract RAG context safely
+        if isinstance(rag_result, dict):
+            rag_context = rag_result.get("rag_context", [])
+        elif isinstance(rag_result, list):
+            rag_context = rag_result
+        else:
+            rag_context = []
+
         formatted_context = self._format_rag_context(rag_context)
-        
+                
         # Build system prompt for grading
         system_prompt = """You are an expert teaching assistant grading a student submission for a Discrete Math course.
 
@@ -319,10 +356,23 @@ FEEDBACK:
 [Detailed feedback here]"""
         
         # Combine query with RAG context
-        if formatted_context:
+        '''if formatted_context:
             full_query = f"{formatted_context}\n\n{query}"
         else:
-            full_query = query
+            full_query = query'''
+        
+        #  RAG context + Tool context + Query
+        full_query_parts = []
+
+        if formatted_context:
+            full_query_parts.append(formatted_context)
+
+        if tool_context:
+            full_query_parts.append("\nTOOL VERIFICATION RESULTS:\n" + tool_context)
+
+        full_query_parts.append(query)
+
+        full_query = "\n\n".join(full_query_parts)
         
         # Generate grading using LLM with RAG
         response = self.client.generate(
@@ -368,6 +418,8 @@ FEEDBACK:
             "rag_context_used": formatted_context if formatted_context else "No relevant context retrieved",
             "raw_response": response
         }
+    
+
     
     def grade_from_file(
         self,
@@ -417,6 +469,38 @@ FEEDBACK:
             List of document metadata dictionaries
         """
         return self.uploaded_docs.copy()
+    
+    def _run_tools_for_submission(self, student_answer: str) -> str:
+        """
+        Automatically detects when tools are needed.
+        Returns tool-generated context to assist grading.
+        """
+        tool_context = ""
+
+        import re
+
+        #detecting simple math expressions
+        math_matches = re.findall(r"\b\d+\s*[\+\-\*\/]\s*\d+\b", student_answer)
+
+        for expr in math_matches:
+            result = self.use_tool("calculator", expression=expr)
+            if "result" in result:
+                tool_context += f"\nVerified Calculation: {expr} = {result['result']}\n"
+
+
+        #detecting complex claims
+        trigger_keywords = ["according to", "research shows", "wikipedia", "study"]
+
+        if any(keyword in student_answer.lower() for keyword in trigger_keywords):
+            web_result = self.use_tool(
+                "web_api",
+                url="https://en.wikipedia.org/api/rest_v1/page/summary/Artificial_intelligence"
+            )
+
+            if "response" in web_result:
+                tool_context += f"\nWeb Verification Snippet:\n{web_result['response'][:500]}\n"
+
+        return tool_context
 
 
 # Example usage and CLI interface

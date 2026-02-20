@@ -29,7 +29,7 @@ class ClientConfig:
     def from_env() -> "ClientConfig":
 
         # Explicitly load .env from current working directory
-        cwd_env = Path.cwd() / ".env.kowalyshyn"
+        cwd_env = Path.cwd() / ".env."
         load_dotenv(dotenv_path=cwd_env, override=True)
 
         endpoint = os.getenv("LLMPROXY_ENDPOINT")
